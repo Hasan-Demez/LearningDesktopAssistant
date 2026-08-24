@@ -63,7 +63,7 @@ Dell Optiplex 3040 mico pc 16gb
 
 ### Computer Large(Not Recommended)
 Tower, Mini tower, Micro Tower pc below 90$
-### Gpu
+#### Gpu
 Nvidia Tesla P100 16GB
 
 ### SpeakerPhone
