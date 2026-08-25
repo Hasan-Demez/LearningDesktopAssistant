@@ -60,6 +60,8 @@ Another future plan is to make everything not use neural networks but rather use
 ### Computer Mini (Recommended)
 Lenovo ThinkCentre M710q Tiny PC 16b
 Dell Optiplex 3040 mico pc 16gb
+Dell wyse 5070 upgrade to 16gb
+Basically 16gb 
 
 ### Computer Large(Not Recommended)
 Tower, Mini tower, Micro Tower pc below 90$
@@ -89,6 +91,10 @@ Uses Faster Whisper small instead of base and its accurate enough now.
 
 Currently only chatting mode is tested.
 This means that no knowledge graph or concept map. A basic local chat bot wihtout memory.
+
+### A better first release
+
+
 
 
 ## First usage

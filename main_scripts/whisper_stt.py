@@ -1,9 +1,13 @@
 import queue
 import threading
 import time
+import warnings
 
 import numpy as np
-import whisperx
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    import whisperx
 
 
 class WhisperInputEngine:

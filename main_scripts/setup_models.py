@@ -389,8 +389,8 @@ def install_whisper_model():
 
     required_files = [
         "config.json",
-        "model.bin",
         "tokenizer.json",
+        "vocabulary.txt",
     ]
 
     if all(
@@ -452,6 +452,77 @@ def install_whisper_model():
     print_status(
         "OK",
         f"Installed Whisper model: {target}"
+    )
+
+
+# ==========================================================
+# PYANNOTE CHECKPOINT UPGRADE
+# ==========================================================
+
+def upgrade_pyannote_checkpoint():
+    """Upgrade the bundled pyannote checkpoint so
+    Lightning stops warning about version mismatch
+    on every startup.
+    """
+
+    print_header(
+        "PYANNOTE CHECKPOINT"
+    )
+
+    try:
+
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            import whisperx
+
+        assets_dir = (
+            Path(whisperx.__file__).parent
+            / "assets"
+        )
+
+        checkpoint = (
+            assets_dir / "pytorch_model.bin"
+        )
+
+    except ImportError:
+
+        print_status(
+            "SKIP",
+            "whisperx not installed, "
+            "skipping checkpoint upgrade.",
+        )
+
+        return
+
+    if not checkpoint.is_file():
+
+        print_status(
+            "SKIP",
+            "pyannote checkpoint not found.",
+        )
+
+        return
+
+    import torch
+
+    checkpoint_data = torch.load(
+        checkpoint,
+        map_location="cpu",
+        weights_only=False,
+    )
+
+    torch.save(
+        checkpoint_data,
+        checkpoint,
+    )
+
+    print_status(
+        "OK",
+        "Upgraded pyannote checkpoint. "
+        "Lightning warning will no longer "
+        "appear.",
     )
 
 
@@ -863,6 +934,8 @@ def main():
         install_vosk_model()
 
         install_whisper_model()
+
+        upgrade_pyannote_checkpoint()
 
         install_silero_vad()
 

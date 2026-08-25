@@ -8,8 +8,8 @@ import time
 # This prevents PyTorch from using too few or too many threads.
 # ===========================================================
 
-_NUM_THREADS = os.cpu_count() or 4
-
+# _NUM_THREADS = os.cpu_count() or 4
+_NUM_THREADS = 4
 os.environ.setdefault("OMP_NUM_THREADS", str(_NUM_THREADS))
 os.environ.setdefault("MKL_NUM_THREADS", str(_NUM_THREADS))
 
@@ -91,9 +91,9 @@ whisper_input = WhisperInputEngine(
     device="cpu",
     compute_type="int8",
     language="en",
-    silence_duration=3.0,
+    silence_duration=1.5,
     min_speech_duration=0.3,
-    energy_threshold=0.015,
+    energy_threshold=0.01,
     max_utterance_duration=15.0,
 )
 
@@ -130,7 +130,7 @@ llm_tts = KokoroSpeechOutputEngine(
 llm = DeskLLM(
     model_path=paths["llm"],
     n_ctx=1024,
-    n_threads=4,
+    n_threads=3,
 )
 
 
