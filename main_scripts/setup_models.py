@@ -48,14 +48,6 @@ WHISPER_HF_REPO = (
 )
 
 
-SILERO_VAD_URL = (
-    "https://huggingface.co/Derur/silero-models/"
-    "resolve/main/vad/silero_vad.jit"
-)
-
-SILERO_VAD_FILE = "silero_vad.jit"
-
-
 PIPER_VOICE = "en_US-lessac-medium"
 
 PIPER_VOICE_DIR = (
@@ -373,13 +365,13 @@ def install_vosk_model():
 
 
 # ==========================================================
-# FASTER-WHISPER / WHISPERX
+# FASTER-WHISPER
 # ==========================================================
 
 def install_whisper_model():
 
     print_header(
-        "WHISPERX / FASTER-WHISPER"
+        "FASTER-WHISPER"
     )
 
     target = (
@@ -455,116 +447,10 @@ def install_whisper_model():
     )
 
 
-# ==========================================================
-# PYANNOTE CHECKPOINT UPGRADE
-# ==========================================================
-
-def upgrade_pyannote_checkpoint():
-    """Upgrade the bundled pyannote checkpoint so
-    Lightning stops warning about version mismatch
-    on every startup.
-    """
-
-    print_header(
-        "PYANNOTE CHECKPOINT"
-    )
-
-    try:
-
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            import whisperx
-
-        assets_dir = (
-            Path(whisperx.__file__).parent
-            / "assets"
-        )
-
-        checkpoint = (
-            assets_dir / "pytorch_model.bin"
-        )
-
-    except ImportError:
-
-        print_status(
-            "SKIP",
-            "whisperx not installed, "
-            "skipping checkpoint upgrade.",
-        )
-
-        return
-
-    if not checkpoint.is_file():
-
-        print_status(
-            "SKIP",
-            "pyannote checkpoint not found.",
-        )
-
-        return
-
-    import torch
-
-    checkpoint_data = torch.load(
-        checkpoint,
-        map_location="cpu",
-        weights_only=False,
-    )
-
-    torch.save(
-        checkpoint_data,
-        checkpoint,
-    )
-
-    print_status(
-        "OK",
-        "Upgraded pyannote checkpoint. "
-        "Lightning warning will no longer "
-        "appear.",
-    )
 
 
-# ==========================================================
-# SILERO VAD
-# ==========================================================
 
-def install_silero_vad():
 
-    print_header(
-        "SILERO VAD"
-    )
-
-    target = (
-        VAD_DIR
-        / SILERO_VAD_FILE
-    )
-
-    if target.is_file():
-
-        print_status(
-            "OK",
-            f"Silero VAD already exists: {target}"
-        )
-
-        return
-
-    download_file(
-        SILERO_VAD_URL,
-        target,
-    )
-
-    if not target.is_file():
-
-        raise RuntimeError(
-            "Silero VAD download failed."
-        )
-
-    print_status(
-        "OK",
-        f"Installed Silero VAD: {target}"
-    )
 
 # ==========================================================
 # KOKORO
@@ -884,13 +770,8 @@ def print_summary():
     )
 
     print(
-        f"  WhisperX:\n"
+        f"  Faster-Whisper:\n"
         f"    {WHISPER_DIR / WHISPER_MODEL_NAME}\n"
-    )
-
-    print(
-        f"  Silero VAD:\n"
-        f"    {VAD_DIR / SILERO_VAD_FILE}\n"
     )
 
     print(
@@ -935,10 +816,6 @@ def main():
 
         install_whisper_model()
 
-        upgrade_pyannote_checkpoint()
-
-        install_silero_vad()
-
         install_piper_voice()
 
         install_kokoro()
@@ -975,9 +852,6 @@ def get_model_paths() -> dict:
         ),
         "whisper": str(
             WHISPER_DIR / WHISPER_MODEL_NAME
-        ),
-        "silero_vad": str(
-            VAD_DIR / SILERO_VAD_FILE
         ),
         "piper_model": str(
             PIPER_VOICE_DIR

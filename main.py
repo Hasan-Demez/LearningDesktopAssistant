@@ -26,7 +26,7 @@ from main_scripts.tts import SpeechOutputEngine
 from main_scripts.kokoro_tts import KokoroSpeechOutputEngine
 
 from main_scripts.llm import DeskLLM
-from main_scripts.commands import AssistantController
+from main_scripts.commands import VoskController, WhisperController
 from main_scripts.setup_models import get_model_paths
 
 _START_TIME = time.monotonic()
@@ -82,7 +82,7 @@ speech_input = SpeechInputEngine(
 
 
 # ==========================================================
-# WHISPERX
+# WHISPER (Faster-Whisper + TEN VAD)
 # ==========================================================
 
 whisper_input = WhisperInputEngine(
@@ -91,10 +91,18 @@ whisper_input = WhisperInputEngine(
     device="cpu",
     compute_type="int8",
     language="en",
-    silence_duration=1.5,
-    min_speech_duration=0.3,
-    energy_threshold=0.01,
+    silence_duration=0.5,
+    end_grace_duration=0.8,
+    min_speech_duration=0.1,
     max_utterance_duration=15.0,
+    vad_hop_size=256,
+    vad_threshold=0.5,
+    # initial_prompt=(
+    #     "The user is talking to a desktop voice assistant "
+    #     "named Buddy. Common spoken commands are: "
+    #     "\"pause buddy\", \"continue buddy\", \"stop buddy\". "
+    #     "Conversations are short everyday sentences."
+    # ),
 )
 
 
@@ -135,13 +143,25 @@ llm = DeskLLM(
 
 
 # ==========================================================
-# CONTROLLER
+# VOSK CONTROLLER (wake/sleep/chat mode transitions)
 # ==========================================================
 
-controller = AssistantController(
+vosk_controller = VoskController(
     speech_input=speech_input,
     speech_output=speech_output,
     llm=llm,
+    assistant_name="buddy",
+)
+
+
+# ==========================================================
+# WHISPER CONTROLLER (pause/continue/stop during chatting)
+# ==========================================================
+
+whisper_controller = WhisperController(
+    llm=llm,
+    llm_tts=llm_tts,
+    speech_output=speech_output,
     assistant_name="buddy",
 )
 
@@ -156,50 +176,118 @@ controller = AssistantController(
 # ==========================================================
 
 def _update_stt_pause():
-    """Pause STT when any audio output is active."""
-    should_pause = (
+    """Pause STT when any audio output is active.
+
+    Vosk is paused when LLM is generating or Kokoro is speaking.
+    Faster Whisper is paused when LLM is generating (but TEN VAD is always active).
+    TEN VAD is never paused during chatting mode.
+    """
+    should_pause_vosk = (
         llm.is_generating.is_set()
         or llm_tts.speech_queued.is_set()
         or speech_output.speaking.is_set()
     )
 
-    if should_pause:
+    should_pause_whisper = (
+        llm.is_generating.is_set()
+    )
+
+    if should_pause_vosk:
         speech_input.pause_event.clear()
-        whisper_input.pause_event.clear()
     else:
         speech_input.pause_event.set()
+
+    if should_pause_whisper:
+        whisper_input.pause_event.clear()
+    else:
         whisper_input.pause_event.set()
 
-    return should_pause
+    return should_pause_vosk or should_pause_whisper
 
 
 # ==========================================================
-# CONTROLLER SIGNAL HANDLERS
+# VOSK CONTROLLER SIGNAL HANDLERS
 #
-# Whisper should only be on when in chatting/listening/talking
-# modes, not when just awake (idle).
+# Whisper should only be on when in chatting mode.
 # ==========================================================
 
-def _on_mode_change(mode, awake):
-    """Handle mode changes from controller.
+def _on_vosk_mode_change(mode, awake):
+    """Handle mode changes from Vosk controller.
 
-    Whisper is enabled only for chatting/listening/talking modes.
+    Whisper is enabled only for chatting mode.
     """
-    if mode in ("chatting", "listening", "talking"):
+    if mode == "chatting":
         whisper_input.large_on()
     else:
         whisper_input.large_off()
 
 
-def _on_state_change(awake):
-    """Handle state changes from controller."""
+def _on_vosk_state_change(awake):
+    """Handle state changes from Vosk controller."""
     if not awake:
         whisper_input.large_off()
 
 
-# Register signal handlers
-controller.on_mode_change(_on_mode_change)
-controller.on_state_change(_on_state_change)
+# Register Vosk controller signal handlers
+vosk_controller.on_mode_change(_on_vosk_mode_change)
+vosk_controller.on_state_change(_on_vosk_state_change)
+
+
+# ==========================================================
+# WHISPER CONTROLLER SIGNAL HANDLERS
+#
+# Handle pause/continue/stop commands during chatting.
+# ==========================================================
+
+def _on_whisper_mode_change(mode, awake):
+    """Handle mode changes from Whisper controller."""
+    if mode == "idle":
+        whisper_input.large_off()
+
+
+def _on_whisper_pause_change(paused):
+    """Handle pause state changes from Whisper controller."""
+    if paused:
+        llm_tts.pause()
+    else:
+        llm_tts.resume()
+
+
+# ==========================================================
+# TEN VAD BARGE-IN
+#
+# Fired the instant TEN VAD detects the START of speech
+# (no transcription delay).  If Kokoro is talking, cut it
+# off mid-utterance so the user is never talked over.
+# ==========================================================
+
+def _on_vad_speech_start():
+    """Cut off Kokoro the moment speech is detected.
+
+    Barge-in is a hard cut: the current utterance and
+    everything still queued is dropped — nothing is
+    stashed or replayed afterwards.
+    """
+
+    if (
+        llm_tts.speaking.is_set()
+        or llm_tts.speech_queued.is_set()
+    ):
+
+        print(
+            f"[{_ts():.3f}s] BARGE-IN: speech detected "
+            f"→ cutting off Kokoro."
+        )
+
+        llm_tts.flush()
+
+
+whisper_input.on_speech_start = _on_vad_speech_start
+
+
+# Register Whisper controller signal handlers
+whisper_controller.on_mode_change(_on_whisper_mode_change)
+whisper_controller.on_pause_change(_on_whisper_pause_change)
 
 
 # ==========================================================
@@ -216,7 +304,7 @@ speech_input.start()
 whisper_input.start()
 
 speech_input.set_small_keywords(
-    controller.sleep_keywords()
+    vosk_controller.sleep_keywords()
 )
 
 speech_input.small_on()
@@ -255,17 +343,17 @@ try:
             _ready_beep_played = False
 
         # ==================================================
-        # SMALL VOSK — commands
+        # SMALL VOSK — commands (only when not chatting)
         # ==================================================
 
         small_text = speech_input.get_small()
 
         if small_text:
 
-            controller.handle(small_text)
+            vosk_controller.handle(small_text)
 
         # ==================================================
-        # WHISPERX — speech for LLM
+        # WHISPER — speech for LLM (only when chatting)
         # ==================================================
 
         llm_text = whisper_input.get()
@@ -274,10 +362,16 @@ try:
 
             print(
                 f"[{_ts():.3f}s] "
-                f"WHISPERX: {llm_text}"
+                f"WHISPER: {llm_text}"
             )
 
-            llm.submit(llm_text)
+            # Check if it's a Whisper command
+            if whisper_controller.handle(llm_text):
+                # Command was handled (pause/continue/stop)
+                pass
+            else:
+                # Not a command, submit to LLM
+                llm.submit(llm_text)
 
         # ==================================================
         # LLM SENTENCES → KOKORO

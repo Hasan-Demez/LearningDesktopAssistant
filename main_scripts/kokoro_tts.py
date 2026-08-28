@@ -61,6 +61,38 @@ class KokoroSpeechOutputEngine:
         self.speech_queued = threading.Event()
 
         # ==================================================
+        # PAUSE (barge-in support)
+        #
+        # pause_event — cleared to pause playback
+        #     mid-utterance, set to allow playback.
+        #
+        # Pausing is a hard cut: whatever remains of the
+        # current sentence is dropped, not stashed.
+        # resume() simply unpauses so future sentences
+        # can play again.
+        # ==================================================
+
+        self.pause_event = threading.Event()
+        self.pause_event.set()   # not paused by default
+
+        # Incremented by flush() so an in-flight player
+        # knows its item was cancelled and must not
+        # stash a resume buffer afterwards.
+        self._epoch = 0
+
+        # ==================================================
+        # PLAYBACK CHUNKING
+        #
+        # Audio is written to the speaker in small chunks
+        # (25 ms) so a pause can take effect almost
+        # instantly instead of after a whole sentence.
+        # ==================================================
+
+        self._chunk_samples = int(
+            self.SAMPLE_RATE * 0.025
+        )
+
+        # ==================================================
         # STATE
         # ==================================================
 
@@ -204,7 +236,10 @@ class KokoroSpeechOutputEngine:
     # PLAYER WORKER
     #
     # Pulls pre-rendered audio from audio_queue,
-    # writes to speakers.
+    # writes to speakers in small chunks so playback
+    # can be cut off mid-utterance (barge-in).
+    #
+    # When paused, the remaining samples are dropped.
     # ======================================================
 
     def _player_worker(self):
@@ -230,6 +265,10 @@ class KokoroSpeechOutputEngine:
 
             samples, sample_rate = item
 
+            # Snapshot the epoch so flush() during
+            # playback can invalidate this item.
+            epoch = self._epoch
+
             try:
 
                 self.speaking.set()
@@ -241,7 +280,50 @@ class KokoroSpeechOutputEngine:
                 )
 
                 stream.start()
-                stream.write(samples)
+
+                # --------------------------------------
+                # Chunked playback loop.
+                #
+                # Between chunks we check pause_event:
+                #   - cleared → stop writing immediately
+                #     and drop the remainder (hard cut).
+                #   - set → keep going.
+                # --------------------------------------
+
+                offset = 0
+
+                total = len(samples)
+
+                while offset < total:
+
+                    if (
+                        not self.pause_event.is_set()
+                        or epoch != self._epoch
+                    ):
+
+                        print(
+                            f"[KOKORO] Cut off at "
+                            f"{offset}/{total} "
+                            f"samples "
+                            f"({offset / sample_rate:.2f}s "
+                            f"of "
+                            f"{total / sample_rate:.2f}s) — "
+                            "remainder dropped."
+                        )
+
+                        break
+
+                    end = min(
+                        offset + self._chunk_samples,
+                        total,
+                    )
+
+                    chunk = samples[offset:end]
+
+                    stream.write(chunk)
+
+                    offset = end
+
                 stream.stop()
                 stream.close()
 
@@ -281,6 +363,78 @@ class KokoroSpeechOutputEngine:
     def is_playing(self):
 
         return self.speaking.is_set()
+
+    # ======================================================
+    # PAUSE / RESUME (barge-in)
+    # ======================================================
+
+    def pause(self):
+        """Pause playback immediately.
+
+        The remainder of the current utterance is
+        dropped — nothing is stashed for replay.
+        """
+        self.pause_event.clear()
+
+        print("[KOKORO] pause() requested.")
+
+    def resume(self):
+        """Unpause so future sentences can play.
+
+        Does NOT replay anything that was cut off
+        while paused — that audio is gone.
+        """
+        self.pause_event.set()
+
+        print("[KOKORO] resume() requested.")
+
+    def flush(self):
+        """Drop everything: queued text, rendered
+        audio, and any in-flight partial utterance.
+        """
+
+        # Invalidate any in-flight playback so the
+        # player stops immediately.
+        self._epoch += 1
+
+        # Make sure playback is unpaused so future
+        # sentences play normally.
+        self.pause_event.set()
+
+        while True:
+
+            try:
+
+                self.text_queue.get_nowait()
+                self.text_queue.task_done()
+
+            except queue.Empty:
+                break
+
+        while True:
+
+            try:
+
+                item = self.audio_queue.get_nowait()
+
+                if item is not None:
+
+                    with self._count_lock:
+
+                        self._pending_count -= 1
+
+                self.audio_queue.task_done()
+
+            except queue.Empty:
+                break
+
+        with self._count_lock:
+
+            self._pending_count = 0
+
+            self.speech_queued.clear()
+
+        print("[KOKORO] Pipeline flushed.")
 
     # ======================================================
     # WAIT

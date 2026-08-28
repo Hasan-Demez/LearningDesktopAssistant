@@ -1,4 +1,12 @@
-class AssistantController:
+class VoskController:
+    """Vosk-based controller for wake/sleep/chat mode transitions.
+
+    Handles commands spoken via Vosk (small model):
+        - "wake up buddy" → turn on
+        - "sleep now buddy" → turn off
+        - "start chatting buddy" → enter chatting mode
+        - "stop chatting buddy" → exit chatting mode
+    """
 
     def __init__(
         self,
@@ -86,22 +94,6 @@ class AssistantController:
 
                 self.stop_chatting()
 
-            case "start_listening":
-
-                self.start_listening()
-
-            case "stop_listening":
-
-                self.stop_listening()
-
-            case "start_talking":
-
-                self.start_talking()
-
-            case "stop_talking":
-
-                self.stop_talking()
-
     # ======================================================
     # COMMAND IDENTIFICATION
     # ======================================================
@@ -139,38 +131,6 @@ class AssistantController:
             and self.assistant_name in text
         ):
             return "stop_chatting"
-
-        # ----------------------------------------------
-        # Learning controls
-        # ----------------------------------------------
-
-        if (
-            "start listening" in text
-            and self.assistant_name in text
-        ):
-            return "start_listening"
-
-        if (
-            "stop listening" in text
-            and self.assistant_name in text
-        ):
-            return "stop_listening"
-
-        # ----------------------------------------------
-        # Knowledge controls
-        # ----------------------------------------------
-
-        if (
-            "start talking" in text
-            and self.assistant_name in text
-        ):
-            return "start_talking"
-
-        if (
-            "stop talking" in text
-            and self.assistant_name in text
-        ):
-            return "stop_talking"
 
         return None
 
@@ -271,98 +231,6 @@ class AssistantController:
         print("MODE: IDLE")
 
     # ======================================================
-    # START LISTENING
-    # ======================================================
-
-    def start_listening(self):
-
-        self.awake = True
-
-        self.llm.set_mode(
-            "listening"
-        )
-
-        self.speech_input.set_small_keywords(
-            self.learning_control_keywords()
-        )
-
-        self._emit_mode_change("listening")
-
-        self.speech_output.talk(
-            "I'm listening."
-        )
-
-        print("MODE: LISTENING")
-
-    # ======================================================
-    # STOP LISTENING
-    # ======================================================
-
-    def stop_listening(self):
-
-        self.llm.set_mode(
-            "idle"
-        )
-
-        self.speech_input.set_small_keywords(
-            self.awake_keywords()
-        )
-
-        self._emit_mode_change("idle")
-
-        self.speech_output.talk(
-            "I stopped listening."
-        )
-
-        print("MODE: IDLE")
-
-    # ======================================================
-    # START TALKING
-    # ======================================================
-
-    def start_talking(self):
-
-        self.awake = True
-
-        self.llm.set_mode(
-            "talking"
-        )
-
-        self.speech_input.set_small_keywords(
-            self.knowledge_control_keywords()
-        )
-
-        self._emit_mode_change("talking")
-
-        self.speech_output.talk(
-            "I'm ready."
-        )
-
-        print("MODE: TALKING")
-
-    # ======================================================
-    # STOP TALKING
-    # ======================================================
-
-    def stop_talking(self):
-
-        self.llm.set_mode(
-            "idle"
-        )
-
-        self.speech_input.set_small_keywords(
-            self.awake_keywords()
-        )
-
-        self._emit_mode_change("idle")
-
-        self.speech_output.talk(
-            "I stopped talking."
-        )
-
-        print("MODE: IDLE")
-
-    # ======================================================
     # KEYWORDS
     # ======================================================
 
@@ -380,8 +248,6 @@ class AssistantController:
             "sleep now",
 
             "start chatting",
-            "start listening",
-            "start talking",
 
             self.assistant_name,
 
@@ -396,18 +262,195 @@ class AssistantController:
             self.assistant_name,
         ]
 
-    def learning_control_keywords(self):
 
-        return [
-            "stop listening",
-            "sleep now",
-            self.assistant_name,
-        ]
+class WhisperController:
+    """Whisper-based controller for commands during chatting mode.
 
-    def knowledge_control_keywords(self):
+    Handles commands spoken via Faster-Whisper (full transcription):
+        - "pause buddy" → pause Kokoro
+        - "continue buddy" → unpause Kokoro
+        - "stop buddy" → back to idle mode
+    """
 
-        return [
-            "stop talking",
-            "sleep now",
-            self.assistant_name,
-        ]
+    def __init__(
+        self,
+        llm,
+        llm_tts,
+        speech_output,
+        assistant_name="buddy",
+    ):
+
+        self.llm = llm
+        self.llm_tts = llm_tts
+        self.speech_output = speech_output
+        self.assistant_name = assistant_name
+
+        self.paused = False
+
+        # ==================================================
+        # SIGNALS (emitted by controller, consumed by main.py)
+        # ==================================================
+
+        self._on_mode_change = None
+        self._on_pause_change = None
+
+    # ======================================================
+    # SIGNAL REGISTRATION
+    # ======================================================
+
+    def on_mode_change(self, callback):
+        """Register a callback for mode changes.
+
+        callback(mode: str, awake: bool)
+        """
+        self._on_mode_change = callback
+
+    def on_pause_change(self, callback):
+        """Register a callback for pause state changes.
+
+        callback(paused: bool)
+        """
+        self._on_pause_change = callback
+
+    def _emit_mode_change(self, mode):
+        """Emit mode change signal."""
+        if self._on_mode_change:
+            self._on_mode_change(mode, True)
+
+    def _emit_pause_change(self):
+        """Emit pause state change signal."""
+        if self._on_pause_change:
+            self._on_pause_change(self.paused)
+
+    # ======================================================
+    # COMMAND ENTRY
+    # ======================================================
+
+    def handle(self, text):
+        """Handle transcribed text from Whisper.
+
+        Returns True if a command was handled, False otherwise.
+        """
+
+        text = text.lower().strip()
+
+        if not text:
+            return False
+
+        command = self._identify_command(
+            text
+        )
+
+        if command is None:
+            return False
+
+        match command:
+
+            case "pause":
+
+                self.pause()
+
+            case "continue":
+
+                self.continue_speaking()
+
+            case "stop":
+
+                self.stop()
+
+        return True
+
+    # ======================================================
+    # COMMAND IDENTIFICATION
+    # ======================================================
+
+    def _identify_command(self, text):
+
+        # ----------------------------------------------
+        # Pause
+        # ----------------------------------------------
+
+        if (
+            "pause" in text
+            and self.assistant_name in text
+        ):
+            return "pause"
+
+        # ----------------------------------------------
+        # Continue
+        # ----------------------------------------------
+
+        if (
+            "continue" in text
+            and self.assistant_name in text
+        ):
+            return "continue"
+
+        # ----------------------------------------------
+        # Stop
+        # ----------------------------------------------
+
+        if (
+            "stop" in text
+            and self.assistant_name in text
+        ):
+            return "stop"
+
+        return None
+
+    # ======================================================
+    # PAUSE
+    # ======================================================
+
+    def pause(self):
+
+        self.paused = True
+
+        self._emit_pause_change()
+
+        self.speech_output.talk(
+            "Paused."
+        )
+
+        print("WHISPER: PAUSED")
+
+    # ======================================================
+    # CONTINUE
+    # ======================================================
+
+    def continue_speaking(self):
+
+        self.paused = False
+
+        self._emit_pause_change()
+
+        self.speech_output.talk(
+            "Continuing."
+        )
+
+        print("WHISPER: CONTINUED")
+
+    # ======================================================
+    # STOP
+    # ======================================================
+
+    def stop(self):
+
+        self.paused = False
+
+        self.llm.set_mode(
+            "idle"
+        )
+
+        # Drop everything Kokoro still has queued
+        # or stashed from a previous pause.
+        self.llm_tts.flush()
+
+        self._emit_pause_change()
+        self._emit_mode_change("idle")
+
+        self.speech_output.talk(
+            "Chat mode stopped."
+        )
+
+        print("WHISPER: STOPPED → IDLE")

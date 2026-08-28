@@ -10,12 +10,9 @@ So the current tech stack for english only is:
 
 Audio input: sounddevice
 
-speech to text: Vosk small for keywords, whisperx for llm handling
+speech to text: Vosk small for keywords, Faster-Whisper for llm handling
 
-
-Knowledge graph: networkx
-
-Visualize knowledge graph: matplotlib
+Voice Activity Detection: TEN VAD
 
 LLM Runtime: llama-cpp-python: llama-cpp-python   
 \--extra-index-url [https://abetlen.github.io/llama-cpp-python/whl/cpu](https://abetlen.github.io/llama-cpp-python/whl/cpu)
@@ -61,12 +58,7 @@ Another future plan is to make everything not use neural networks but rather use
 Lenovo ThinkCentre M710q Tiny PC 16b
 Dell Optiplex 3040 mico pc 16gb
 Dell wyse 5070 upgrade to 16gb
-Basically 16gb 
-
-### Computer Large(Not Recommended)
-Tower, Mini tower, Micro Tower pc below 90$
-#### Gpu
-Nvidia Tesla P100 16GB
+Basically 16gb or 8gb could also work too for now.
 
 ### SpeakerPhone
 EMEET OfficeCore M1A Speakerphone
@@ -93,6 +85,14 @@ Currently only chatting mode is tested.
 This means that no knowledge graph or concept map. A basic local chat bot wihtout memory.
 
 ### A better first release
+
+Replaced WhisperX with Faster-Whisper + TEN VAD for better performance.
+Removed knowledge graph and learning modes (listening/talking).
+Simplified to only idle and chatting modes.
+Added WhisperController for pause/continue/stop commands during chatting.
+VoskController handles wake/sleep/chat mode transitions.
+TEN VAD is always active during chatting mode, never paused.
+Beep plays only when it's the user's turn to speak.
 
 
 

@@ -1,8 +1,5 @@
-import json
 import queue
 import threading
-
-import networkx as nx
 
 from llama_cpp import Llama
 from stream2sentence import generate_sentences
@@ -27,12 +24,6 @@ class DeskLLM:
         )
 
         print("LLM loaded.")
-
-        # ----------------------------------------------
-        # Knowledge graph
-        # ----------------------------------------------
-
-        self.graph = nx.Graph()
 
         # ----------------------------------------------
         # Conversation memory
@@ -76,8 +67,6 @@ class DeskLLM:
         valid_modes = {
             "idle",
             "chatting",
-            "listening",
-            "talking",
         }
 
         if mode not in valid_modes:
@@ -179,7 +168,7 @@ class DeskLLM:
                 self.is_generating.set()
 
                 # ------------------------------------------
-                # Streaming modes (chatting, talking)
+                # Streaming mode (chatting)
                 # ------------------------------------------
 
                 if mode == "chatting":
@@ -201,48 +190,6 @@ class DeskLLM:
                     self._store_memory(
                         text, full_response
                     )
-
-                elif mode == "talking":
-
-                    messages = self._answer_messages(
-                        text
-                    )
-
-                    full_response = self._stream_to_queue(
-                        messages,
-                        temperature=0.3,
-                        max_tokens=256,
-                    )
-
-                    # ----------------------------------
-                    # Store in conversation memory
-                    # ----------------------------------
-
-                    self._store_memory(
-                        text, full_response
-                    )
-
-                # ------------------------------------------
-                # Non-streaming mode (listening)
-                # ------------------------------------------
-
-                elif mode == "listening":
-
-                    response = self._learn(text)
-
-                    if response:
-
-                        self.sentence_queue.put(
-                            response
-                        )
-
-                        # ------------------------------
-                        # Store in conversation memory
-                        # ------------------------------
-
-                        self._store_memory(
-                            text, response
-                        )
 
             except Exception as e:
 
@@ -332,180 +279,7 @@ class DeskLLM:
             },
         ]
 
-    # ======================================================
-    # LEARN
-    # ======================================================
 
-    def _learn(self, user_text):
-
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a precise knowledge extraction "
-                    "system.\n\n"
-
-                    "Extract the most important relationship "
-                    "from the user's statement.\n\n"
-
-                    "Return ONLY valid JSON:\n"
-
-                    '{"source": "concept1", '
-                    '"target": "concept2", '
-                    '"relation": "relationship"}\n\n'
-
-                    "Do not include markdown."
-                    "Do not include explanations."
-                ),
-            },
-            {
-                "role": "user",
-                "content": user_text,
-            },
-        ]
-
-        response = self._generate(
-            messages,
-            temperature=0.1,
-            max_tokens=150,
-        )
-
-        try:
-
-            data = self._extract_json(
-                response
-            )
-
-            source = str(
-                data["source"]
-            ).strip()
-
-            target = str(
-                data["target"]
-            ).strip()
-
-            relation = str(
-                data["relation"]
-            ).strip()
-
-            self.graph.add_edge(
-                source,
-                target,
-                relationship=relation
-            )
-
-            print(
-                f"GRAPH: {source} "
-                f"--({relation})--> "
-                f"{target}"
-            )
-
-            return (
-                f"I learned that "
-                f"{source} {relation} {target}."
-            )
-
-        except Exception as e:
-
-            print(
-                f"Knowledge extraction failed: {e}"
-            )
-
-            self.graph.add_node(
-                user_text[:100],
-                raw_information=user_text,
-            )
-
-            return (
-                "I couldn't structure that information, "
-                "but I saved it."
-            )
-
-    # ======================================================
-    # KNOWLEDGE ANSWER
-    # ======================================================
-
-    def _answer_messages(self, user_text):
-
-        context = self._get_relevant_context(
-            user_text
-        )
-
-        system = {
-            "role": "system",
-            "content": (
-                "You are Buddy, a local desk assistant.\n\n"
-
-                "Answer using ONLY the information in "
-                "the knowledge base.\n\n"
-
-                "Do not invent facts.\n"
-
-                "If the knowledge base does not contain "
-                "the answer, say you don't know.\n\n"
-
-                "Keep the answer concise.\n\n"
-
-                f"KNOWLEDGE BASE:\n{context}"
-            ),
-        }
-
-        history = self._get_memory_messages()
-
-        return [system] + history + [
-            {
-                "role": "user",
-                "content": user_text,
-            },
-        ]
-
-    # ======================================================
-    # GRAPH SEARCH
-    # ======================================================
-
-    def _get_relevant_context(self, query):
-
-        query = query.lower()
-
-        facts = []
-
-        for node in self.graph.nodes:
-
-            node_text = str(node)
-
-            if node_text.lower() in query:
-
-                neighbors = list(
-                    self.graph.neighbors(node)
-                )
-
-                for neighbor in neighbors:
-
-                    edge = (
-                        self.graph.get_edge_data(
-                            node,
-                            neighbor
-                        )
-                    )
-
-                    relation = edge.get(
-                        "relationship",
-                        "is related to"
-                    )
-
-                    facts.append(
-                        f"- {node} "
-                        f"{relation} "
-                        f"{neighbor}"
-                    )
-
-        if not facts:
-
-            return "No relevant information found."
-
-        return "\n".join(
-            dict.fromkeys(facts)
-        )
 
     # ======================================================
     # STREAMING GENERATION
@@ -561,7 +335,7 @@ class DeskLLM:
             token_stream,
             tokenizer="rule-based",
             language="en",
-            minimum_sentence_length=20,
+            minimum_sentence_length=10,
             auto_context=True,
             quick_yield_single_sentence_fragment=True,
             cleanup_text_links=True,
@@ -583,57 +357,7 @@ class DeskLLM:
 
         return full_response
 
-    # ======================================================
-    # GENERATION (non-streaming, used by _learn)
-    # ======================================================
 
-    def _generate(
-        self,
-        messages,
-        temperature=0.7,
-        max_tokens=256,
-    ):
-
-        response = (
-            self.llm.create_chat_completion(
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-        )
-
-        return (
-            response["choices"][0]
-            ["message"]["content"]
-            .strip()
-        )
-
-    # ======================================================
-    # JSON
-    # ======================================================
-
-    @staticmethod
-    def _extract_json(text):
-
-        try:
-
-            return json.loads(text)
-
-        except json.JSONDecodeError:
-            pass
-
-        start = text.find("{")
-        end = text.rfind("}")
-
-        if start == -1 or end == -1:
-
-            raise ValueError(
-                "No JSON object found."
-            )
-
-        return json.loads(
-            text[start:end + 1]
-        )
 
     # ======================================================
     # SHUTDOWN

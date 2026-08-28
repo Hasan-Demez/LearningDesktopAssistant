@@ -14,7 +14,7 @@ class SharedAudioInput:
             |
             +--> small_vosk
             |
-            +--> whisperx
+            +--> whisper
 
     Each consumer gets its own queue, so a slow consumer
     does not block the microphone callback.
