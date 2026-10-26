@@ -8,14 +8,6 @@ import time
 # This prevents PyTorch from using too few or too many threads.
 # ===========================================================
 
-# _NUM_THREADS = os.cpu_count() or 4
-_NUM_THREADS = 4
-os.environ.setdefault("OMP_NUM_THREADS", str(_NUM_THREADS))
-os.environ.setdefault("MKL_NUM_THREADS", str(_NUM_THREADS))
-
-import torch
-torch.set_num_threads(_NUM_THREADS)
-torch.set_num_interop_threads(1)
 
 from main_scripts.audio_input import SharedAudioInput
 from main_scripts.audio_output import play_beep
